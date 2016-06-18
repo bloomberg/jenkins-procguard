@@ -1,0 +1,86 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use IO::Handle;
+
+my $control_fdnum = shift @ARGV;
+open my $p_write, '>>&=', $control_fdnum
+  or die "Failed to get control channel: $!\n";
+$p_write->autoflush(1);
+
+# in order to capture the exit code, we need a wrapping process
+# that can wait on that process.
+my $grandchild = fork();
+die "Failed to fork: $!"
+  unless defined $grandchild;
+
+if ( !$grandchild ) {
+    close $p_write;
+    exec @ARGV
+      or die "jenkins-procguard-monitor: @ARGV: Failed to exec @ARGV: $!";
+} else {
+    print $p_write "$grandchild\n";
+    while (1) {
+        my $r = waitpid $grandchild, 0;
+        if ( $r == -1 ) {
+            # process disappeared
+            print $p_write "N/A\n";
+            exit 1;
+        } elsif ( $r == $grandchild ) {
+            # process has left
+            print $p_write "$?\n";
+            exit 0;
+        }    # else ignore, keep trying..
+    }
+}
+
+__END__
+
+=head1 NAME
+
+jenkins-procguard-monitor - internal detail of jenkins-procguard
+
+=head1 SYNOPSIS
+
+  jenkins-procguard command arg1 arg2 ...
+
+=head1 DESCRIPTION
+
+Runs a subprocess in a separate process tree and without the Jenkins
+environment variables that it uses to find processes.
+
+It will detach the subprocess from the process tree by using setsid,
+but it will monitor that process and send whatever signals are sent to
+this process to the process being monitored, and will only exit once
+the other process has exitted.
+
+=head1 ENVIRONMENT
+
+This will remove any of the documented jenkins job variables from the
+process before the fork and exec. It will also set
+JENKINS_PROCGUARD_MONITOR_PID with the pid of the process that is
+monitoring it.
+
+=head1 EXIT CODE
+
+The guard will open a pipe between the two sides to send back the exit
+status when the monitored process exits.
+
+=head1 COPYRIGHT
+
+Copyright 2016 Bloomberg Finance L.P.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+=cut
+
